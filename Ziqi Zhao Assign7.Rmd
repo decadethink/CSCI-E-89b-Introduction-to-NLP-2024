@@ -1,0 +1,242 @@
+---
+title: "Ziqi Zhao Assign 7"
+output:
+  html_document: default
+  pdf_document: default
+date: "2024-11-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r p 1.1}
+# Load required libraries
+library(stm)
+library(tm)
+library(wordcloud)
+```
+
+```{r p1.2}
+# Load dataset
+hotel_reviews <- read.csv("hotel_reviews.csv")
+
+# Display structure and summary 
+str(hotel_reviews)
+summary(hotel_reviews)
+
+# Extract Review and Rating columns
+documents <- as.character(hotel_reviews$Review)
+ratings <- as.factor(hotel_reviews$Rating)
+```
+
+```{r p1.3}
+# Convert text to lowercase, remove special characters, numbers, and apply stemming
+corpus <- Corpus(VectorSource(documents))
+corpus <- tm_map(corpus, content_transformer(tolower))
+corpus <- tm_map(corpus, removePunctuation)
+corpus <- tm_map(corpus, removeNumbers)
+corpus <- tm_map(corpus, removeWords, stopwords("en"))
+corpus <- tm_map(corpus, stemDocument)
+
+memory.limit(size = 32000)
+
+# Create a Document-Term Matrix (DTM)
+dtm <- DocumentTermMatrix(corpus)
+documents <- dtm
+```
+
+```{r p1.4}
+# Preprocess text and remove infrequent words
+processed <- textProcessor(documents = hotel_reviews$Review, metadata = data.frame(ratings))
+
+# Prepare documents for STM
+stm_data <- prepDocuments(processed$documents, processed$vocab, processed$meta)
+
+# Fit STM model
+stm_fit <- selectModel(stm_data$documents, stm_data$vocab, K = 3, prevalence = ~ratings, runs=20, M=4, verbose = FALSE)
+
+# Plot model metrics
+plotModels(stm_fit)
+```
+
+```{r p1.5}
+# Using log likelihoods as semantic coherence and exclusivity are NOT built in
+# to the selectModel results unlike searchK. I tried manually calculating but
+# it was too tedious and I wasn not sure it was correct.
+
+# Can also confirm model 3 is likely one of best based on the plot above
+# visually
+log_likelihoods <- sapply(stm_fit$runout, function(x) tail(x$convergence$bound, 1))
+
+print(log_likelihoods)
+
+# Select the best model based on the highest log-likelihood
+best_model_index <- which.max(log_likelihoods)
+print(best_model_index)
+best_model <- stm_fit$runout[[best_model_index]]
+
+# Display top 7 words for each topic in the best model
+labelTopics(best_model, n = 7)
+```
+
+```{r p1.6, fig.width=12,fig.height=6}
+par(mfrow = c(1, 3))
+cloud(best_model, topic = 1, max.words = 50)
+cloud(best_model, topic = 2, max.words = 50)
+cloud(best_model, topic = 3, max.words = 50)
+```
+```{r p1.7}
+# Extract the theta matrix from the best model
+theta <- best_model$theta
+
+# Identify the 5 reviews most associated with each topic
+top_reviews <- lapply(1:ncol(theta), function(topic) {
+  # Sort reviews by their association with the topic
+  top_indices <- order(theta[, topic], decreasing = TRUE)[1:5]
+  # Retrieve the corresponding reviews
+  hotel_reviews$Review[top_indices]
+})
+
+# Display the top reviews for each topic
+for (i in seq_along(top_reviews)) {
+  cat(sprintf("\nTop reviews for Topic %d:\n", i))
+  print(top_reviews[[i]])
+}
+
+```
+
+```{r p1.8}
+# Retrieve top words for each topic
+top_words <- labelTopics(best_model, n = 7)
+
+# Provide labels based on interpretation of top words and reviews
+topic_labels <- c("Leisure Activities", "Bad Experiences", "Overall positive room, service, and locations reviews")  
+
+# Print the topic labels
+cat("Topic Labels:\n")
+for (i in seq_along(topic_labels)) {
+  cat(sprintf("Topic %d: %s\n", i, topic_labels[i]))
+}
+
+```
+
+```{r p1.9}
+# Plot topic prevalence for the best model
+plot(best_model, type = "summary", n = 3)
+
+```
+
+```{r p1.10}
+# Estimate the effect of the Rating variable on topic prevalence
+effects <- estimateEffect(1:3 ~ ratings, best_model, meta = stm_data$meta)
+
+# Display the effects summary
+summary(effects)
+
+```
+
+```{r p1.11,  fig.width=10,fig.height=4}
+# Plot the effects for each topic
+par(mfrow = c(1, 3))  # Arrange plots in a row
+for (topic in 1:3) {
+  plot(effects, covariate = "ratings", topics = topic, model = best_model,
+       main = sprintf("Effect of Rating on Topic %d", topic))
+}
+```
+
+```{r p2.1}
+# Run searchK to evaluate topic models with topics ranging from 2 to 6
+k_results <- searchK(
+  stm_data$documents, 
+  stm_data$vocab, 
+  K = c(2:6), 
+  prevalence = ~ratings, 
+  data = stm_data$meta,
+  verbose = FALSE
+)
+```
+
+```{r p2.2}
+plot(k_results)
+
+# Plotting Coherence vs. Exclusivity
+coherence <- sapply(k_results$results$semcoh, function(x) x[1])
+exclusivity <- sapply(k_results$results$exclus, function(x) x[1])
+K_values <- seq(2, 6)
+plot_data <- data.frame(Topics = K_values, Coherence = coherence, Exclusivity = exclusivity)
+
+library(ggplot2)
+
+ggplot(plot_data, aes(x = Coherence, y = Exclusivity, label = Topics)) +
+  geom_point() +
+  geom_text(vjust = -0.5) +
+  labs(title = "Exclusivity vs. Coherence", x = "Semantic Coherence", y = "Exclusivity") +
+  theme_minimal()
+```
+
+```{r p2.3}
+
+# Compute the composite score
+composite_score <- 0.5 * coherence + 0.5 * exclusivity
+
+# Determine the optimal number of topics
+optimal_k <- k_results$results$K[which.max(composite_score)]
+print(optimal_k)
+```
+
+```{r p2.4}
+optimal_k <- as.numeric(optimal_k)
+
+# Fit STM model with the optimal number of topics
+optimal_model <- selectModel(
+  stm_data$documents, 
+  stm_data$vocab, 
+  K = optimal_k, 
+  prevalence = ~ratings, 
+  data = stm_data$meta,
+  runs=20,
+  M=4,
+  verbose = FALSE
+)
+```
+
+```{r p2.5, fig.width=8,fig.height=8}
+
+# Plot model diagnostics 
+plotModels(optimal_model, pch=c(1,2,3,4), legend.position="bottomright")
+
+# Choose the best initialization
+selected_model <- optimal_model$runout[[2]]
+
+summary(selected_model)
+
+par(mfrow = c(1, optimal_k))  # Arrange plots in a row
+for (topic in 1:optimal_k) {
+  cloud(selected_model, topic = topic, max.words = 50)
+}
+```
+
+```{r p2.6}
+
+# Display the top 7 words for each topic
+top_words <- labelTopics(selected_model, n = 7)
+print(top_words)
+
+# Extract theta matrix
+theta <- selected_model$theta
+
+# Identify the most associated review for each topic
+top_reviews <- lapply(1:optimal_k, function(topic) {
+  # Find the review with the highest proportion for this topic
+  top_index <- which.max(theta[, topic])
+  hotel_reviews$Review[top_index]
+})
+
+# Display the top reviews
+for (i in seq_along(top_reviews)) {
+  cat(sprintf("\nTop review for Topic %d:\n", i))
+  print(top_reviews[[i]])
+}
+```

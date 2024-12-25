@@ -1,0 +1,124 @@
+---
+title: "Ziqi Zhao Assign 6 P3"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+```{r p3.1}
+library(rvest)
+library(httr)
+
+# URL of the webpage (similar to the Python code)
+url <- "https://www.gutenberg.org/cache/epub/36/pg36-images.html#chap03"
+
+# Send a GET request to the webpage
+response <- GET(url)
+
+# Check if the request was successful (status code 200)
+if (status_code(response) == 200) {
+    # Parse the HTML content
+    page_content <- read_html(content(response, "text"))
+    
+    # Find all <p> tags in the HTML and extract text
+    paragraphs <- page_content %>% html_nodes("p") %>% html_text(trim = TRUE)
+    
+    # Select paragraphs from index 9 to 28 (just as in P1, but indices need +1 for same paragraphs)
+    documents <- paragraphs[9:28]
+    
+    # Print out the selected paragraphs
+    print(documents)
+    
+} else {
+    print("Failed to retrieve the webpage.")
+}
+```
+
+```{r p3.2}
+# Load libraries
+library(tm)
+library(topicmodels)
+library(SnowballC)
+
+# Create a Text Corpus
+corpus <- VCorpus(VectorSource(documents))
+
+# Preprocess the Text Data
+corpus <- tm_map(corpus, content_transformer(tolower))          # Convert to lowercase
+corpus <- tm_map(corpus, removePunctuation)                     # Remove punctuation
+corpus <- tm_map(corpus, removeNumbers)                         # Remove numbers
+corpus <- tm_map(corpus, removeWords, stopwords("english"))     # Remove stopwords
+corpus <- tm_map(corpus, stemDocument)                          # Apply stemming
+corpus <- tm_map(corpus, stripWhitespace)                       # Remove extra whitespace
+
+# Create a Document-Term Matrix
+dtm <- DocumentTermMatrix(corpus)
+
+#  Train the LDA Model
+num_topics <- 6  #Number of topics used in P1
+lda_model <- LDA(dtm, k = num_topics, control = list(seed = 1234))
+
+# Display the top 10 terms for each topic
+terms_lda <- terms(lda_model, 10)  
+
+cat("LDA Model Topics:\n\n")
+for (topic_idx in 1:ncol(terms_lda)) {
+    cat(paste("Topic", topic_idx, ":", paste(terms_lda[, topic_idx], collapse = ", "), "\n"))
+}
+
+# Identify and Display the Most Associated Documents for Each Topic
+# Get the document-topic probability matrix
+doc_topics <- lda_model@gamma
+
+```
+```{r p3.3}
+# Note this part is not required by the assignment but done in section, so I thought I would include
+# topic distributions and prevalences as a check
+
+# Get the topic distribution for each document
+topic_distributions <- posterior(lda_model)$topics
+
+# Print the topic distribution
+print(topic_distributions)
+
+# Display the topic distributions
+for (doc_index in 1:nrow(topic_distributions)) {
+  cat(sprintf("Document %d:\n", doc_index))
+  for (topic_index in 1:ncol(topic_distributions)) {
+    prevalence <- topic_distributions[doc_index, topic_index]
+    cat(sprintf("  Topic %d: %.4f\n", topic_index, prevalence))
+  }
+}
+
+```
+```{r p3.4}
+# For each topic, find the top 2 documents
+num_topics <- ncol(topic_distributions)
+for (topic_index in 1:num_topics) {
+  # Get the prevalence of the current topic across all documents
+  topic_prevalence <- topic_distributions[, topic_index]
+  
+  # Get the indices of the top 2 documents for this topic
+  # order(-x, ...) is used to sort in decreasing order
+  top_document_indices <- order(-topic_prevalence)[1:2]
+  
+  # Display the documents with the highest prevalence of the current topic
+  cat("\nTopic", topic_index, "\n")
+  cat("Short Label:", paste(terms_lda[1:3, topic_index], collapse = ", "), "\n")  # Short label based on top words
+  cat(sprintf("\nTop 2 documents for Topic %d:\n", topic_index))
+  for (doc_index in top_document_indices) {
+    prevalence <- topic_prevalence[doc_index]
+    cat(sprintf("  Document %d (Prevalence: %.4f):\n", doc_index, prevalence))
+    cat(sprintf("    %s\n", documents[doc_index]))
+  }
+}
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
